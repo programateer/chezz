@@ -1,0 +1,170 @@
+local module = {}
+
+
+local storage = game:GetService("ReplicatedStorage")
+local event = require(storage.events)
+
+local gui = script.Parent.Parent
+
+local TWEEN_STYLE = Enum.EasingStyle.Quad
+local TWEEN_SPEED = .2
+
+local function setStatus(status)
+	if (not status) then
+		gui.statusDisplay.Visible = false
+	else
+		gui.statusDisplay.Visible = true
+		gui.statusDisplay.textLabel.Text = status
+	end
+end
+
+
+module.screen = gui
+module.lists = {}
+module.setStatus = setStatus
+
+local list = {}
+
+local function newList(name, ui)
+	local newList = {}
+	
+	newList.ui = ui
+	newList.template = newList.ui.scroll.holder.template
+	newList.template.Parent = nil
+	
+	newList.name = name
+	newList.members = {}
+	newList.interacted = event.new()
+	
+	setmetatable(newList, {__index = list})	
+	
+	module.lists[name] = newList
+	
+	return newList	
+end
+
+function list:resize()
+	self.ui.scroll.CanvasSize = UDim2.new(0, 0, 0, self.ui.scroll.holder.AbsoluteSize.Y * #self.members)
+end
+
+function list:refresh()
+	for index, member in pairs(self.members) do
+		member.ui:TweenPosition(UDim2.new(0, 0, index - 1, 0), "Out", TWEEN_STYLE, TWEEN_SPEED, true)
+	end
+end
+
+function list:add(ref, text)
+	if (not text) then
+		text = ref
+	end
+	
+	local member = {}
+	member.ref = ref
+	member.text = text
+	member.ui = self.template:clone()
+	
+	member.ui.textLabel.Text = text	
+	member.ui.button.MouseButton1Click:connect(function()
+		self.interacted:fire(ref)
+	end)
+	member.ui.button.MouseEnter:connect(function()
+		member.ui.textLabel.TextStrokeTransparency = .95
+	end)
+	member.ui.button.MouseLeave:connect(function()
+		member.ui.textLabel.TextStrokeTransparency = 1
+	end)
+	member.ui.Parent = self.ui.scroll.holder
+	
+	self.members[#self.members + 1] = member
+	
+	member.ui.Position = UDim2.new(-1, 0, #self.members - 1, 0)
+	member.ui:TweenPosition(UDim2.new(0, 0, #self.members - 1, 0), "Out", TWEEN_STYLE, TWEEN_SPEED, true)
+end
+
+function list:getMember(ref)
+	for index, member in pairs(self.members) do
+		if (member.ref == ref) then
+			return member, index
+		end
+	end
+end
+
+function list:setCheck(ref, enabled)
+	local member = self:getMember(ref)
+	
+	if (member) then
+		member.ui.check.Visible = enabled
+	end
+end
+
+function list:remove(ref, text)
+	if (not text) then
+		text = ref
+	end
+	
+	local member, index = self:getMember(ref)
+	
+	if (member) then
+		local ui = member.ui
+		member.ui = nil
+		member.ref = nil		
+		
+		ui:TweenPosition(UDim2.new(1, 0, index - 1, 0), "Out", TWEEN_STYLE, TWEEN_SPEED, true, function()
+			ui:Destroy()
+			self:refresh()
+		end)
+		
+		table.remove(self.members, index)
+	end
+end
+
+local screenVisible = true
+
+function module.transitionScreen(visible)
+	if (visible == screenVisible) then
+		return
+	end
+	
+	screenVisible = visible
+	
+	if (visible) then
+		if (not gui.background.Visible) then
+			gui.background.Position = UDim2.new(-1, 0, 0, 0)
+			gui.background.Visible = true
+		end
+		
+		gui.background:TweenPosition(UDim2.new(0, 0, 0, 0), "Out", TWEEN_STYLE, TWEEN_SPEED, true)
+	else
+		if (not gui.background.Visible) then
+			return
+		end
+		
+		gui.background:TweenPosition(UDim2.new(1, 0, 0, 0), "Out", TWEEN_STYLE, TWEEN_SPEED, true, function(tweenStatus)
+			if (tweenStatus == Enum.TweenStatus.Completed) then
+				gui.background.Visible = false -- cleanup
+			end
+		end)
+	end
+end
+
+function module.setPlayerDisplay(whitePlayer, blackPlayer)
+	if ((not whitePlayer) or (not blackPlayer)) then
+		gui.display.Visible = false
+	else
+		gui.display.whiteLabel.Text = whitePlayer.Name
+		gui.display.blackLabel.Text = blackPlayer.Name
+		gui.display.Visible = true
+	end
+end
+
+newList("available", gui.background.screen.availableList)
+newList("invite", gui.background.screen.inviteList)
+newList("spectate", gui.background.screen.spectateList)
+
+gui:GetPropertyChangedSignal("AbsoluteSize"):connect(function()
+	for name, list in pairs(module.lists) do
+		list:resize()
+	end
+end)
+
+return module
