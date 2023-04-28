@@ -1,0 +1,498 @@
+local module = {}
+
+local util = require(game:GetService("ReplicatedStorage").utilities)
+
+local BOARD_SIZE = 8
+
+-- true is player1, false is player2
+
+local pieceType = {
+	pawn = 1;
+	knight = 2;
+	bishop = 3;
+	rook = 4;
+	queen = 5;
+	king = 6;
+}
+
+local knightMoves = {}
+
+local board = {}
+
+local pointmeta = {
+	__eq = function(self, other)
+		return self.x == other.x and self.y == other.y
+	end
+}
+
+local function point(x, y)
+	return setmetatable({x = x, y = y}, pointmeta)
+end
+
+for x = -2, 2 do
+	for y = -2, 2 do
+		if ((math.abs(x) == 2 and math.abs(y) == 1) or (math.abs(x) == 1 and math.abs(y) == 2)) then
+			knightMoves[#knightMoves + 1] = point(x, y)
+		end
+	end
+end
+
+
+function board:set()
+	self.grid = {}
+	
+	for x = 1, BOARD_SIZE do
+		local column = {}
+		for y = 1, BOARD_SIZE do
+			column[y] = false			--lets not
+		end
+		self.grid[x] = column
+	end
+	
+	--black
+	self:createPiece(1, 1, pieceType.rook, false)			--test colors by turning these to true, OK that worked, SO COLOR can be controlled by boolean
+	self:createPiece(2, 1, pieceType.knight, false)
+	self:createPiece(3, 1, pieceType.bishop, false)
+	self:createPiece(4, 1, pieceType.queen, false)
+	self:createPiece(5, 1, pieceType.king, false)
+	self:createPiece(6, 1, pieceType.bishop, false)
+	self:createPiece(7, 1, pieceType.knight, false)
+	self:createPiece(8, 1, pieceType.rook, false)
+	
+	for x = 1, BOARD_SIZE do
+		self:createPiece(x, 2, pieceType.pawn, false)
+	end
+	
+	--white
+	self:createPiece(1, 8, pieceType.rook, true)
+	self:createPiece(2, 8, pieceType.knight, true)
+	self:createPiece(3, 8, pieceType.bishop, true)
+	self:createPiece(4, 8, pieceType.queen, true)
+	self:createPiece(5, 8, pieceType.king, true)
+	self:createPiece(6, 8, pieceType.bishop, true)
+	self:createPiece(7, 8, pieceType.knight, true)
+	self:createPiece(8, 8, pieceType.rook, true)
+	
+	for x = 1, BOARD_SIZE do
+		self:createPiece(x, 7, pieceType.pawn, true)
+	end
+end
+
+function board:isInCheck(player)
+	local kingPoint = self.kings[player]
+	
+	for x = 1, BOARD_SIZE do
+		for y = 1, BOARD_SIZE do
+			local piece = self.grid[x][y]
+				
+			if (piece and piece.player ~= player) then
+				if (self:isLegal(piece, kingPoint.x, kingPoint.y, true)) then
+					print("check", piece.x, piece.y)
+					return true
+				end
+			end
+		end
+	end
+end
+
+function board:isLegal(piece, x, y, subsequent)
+	return util.isInArray(self:getPieceMoves(piece, subsequent), point(x, y))
+end
+
+function board:surveyMove(piece, x, y) -- check for check
+	self:movePiece(piece, x, y, true)
+	
+	local check = self:isInCheck(piece.player)
+	
+	self:revertMove()
+	
+	return check -- placeholder
+end
+
+function board:inBounds(x, y)
+	return x > 0 and x <= BOARD_SIZE and y > 0 and y <= BOARD_SIZE
+end
+
+function board:getDirectionalMoves(moves, piece, dx, dy)
+	local x, y = piece.x, piece.y
+	
+	while true do
+		x = x + dx
+		y = y + dy
+		
+		if (not self:inBounds(x, y)) then
+			break
+		elseif (self.grid[x][y]) then
+			if (self.grid[x][y].player ~= piece.player) then
+				moves[#moves + 1] = point(x, y)
+			end
+			
+			break
+		end
+		
+		moves[#moves + 1] = point(x, y)
+	end
+end
+
+function board:getBishopMoves(piece)
+	local moves = {}
+	
+	self:getDirectionalMoves(moves, piece, -1, -1)
+	self:getDirectionalMoves(moves, piece, -1, 1)
+	self:getDirectionalMoves(moves, piece, 1, -1)
+	self:getDirectionalMoves(moves, piece, 1, 1)
+	
+	return moves
+end
+
+function board:getRookMoves(piece)
+	local moves = {}
+	
+	self:getDirectionalMoves(moves, piece, 0, 1)
+	self:getDirectionalMoves(moves, piece, 0, -1)
+	self:getDirectionalMoves(moves, piece, 1, 0)
+	self:getDirectionalMoves(moves, piece, -1, 0)
+	
+	return moves
+end
+
+function board:getQueenMoves(piece)
+	local moves = {}
+	
+	self:getDirectionalMoves(moves, piece, -1, -1)
+	self:getDirectionalMoves(moves, piece, -1, 1)
+	self:getDirectionalMoves(moves, piece, 1, -1)
+	self:getDirectionalMoves(moves, piece, 1, 1)
+	self:getDirectionalMoves(moves, piece, 0, 1)
+	self:getDirectionalMoves(moves, piece, 0, -1)
+	self:getDirectionalMoves(moves, piece, 1, 0)
+	self:getDirectionalMoves(moves, piece, -1, 0)
+	
+	return moves
+end
+
+function board:getPawnMoves(piece)
+	local moves = {}
+	local direction
+	local origin		
+	
+	if (piece.player) then	--pawns move -1 down the y axis if black
+		direction = -1		--direction = y-axis
+		origin = 7	
+	else
+		direction = 1	--pawns move +1 up the y axis if white
+		origin = 2
+	end
+	
+	if (not self.grid[piece.x][piece.y + direction]) then		--something to do with moving 2 squares on origin position
+		moves[#moves + 1] = point(piece.x, piece.y + direction)
+		
+		if (piece.y == origin and (not self.grid[piece.x][piece.y + direction + direction])) then
+			moves[#moves + 1] = point(piece.x, piece.y + direction + direction)
+		end
+	end
+	
+	if (piece.x > 1 and self.grid[piece.x - 1][piece.y + direction] and self.grid[piece.x - 1][piece.y + direction].player ~= piece.player) then
+		moves[#moves + 1] = point(piece.x - 1, piece.y + direction)
+	end			--I believe this has to do with capturing a piece, 
+		
+	if (piece.x < BOARD_SIZE and self.grid[piece.x + 1][piece.y + direction] and self.grid[piece.x + 1][piece.y + direction].player ~= piece.player) then
+		moves[#moves + 1] = point(piece.x + 1, piece.y + direction)
+	end
+	
+	if (piece.y == (origin + direction * 3)) then
+		local lastMove = self.log[#self.log]
+		local lastPiece = lastMove.piece
+		
+		if (lastPiece.type == pieceType.pawn and math.abs(lastMove.newX - piece.x) == 1 and math.abs(lastMove.newY - lastMove.pastY) == 2) then
+			local move = point(lastMove.newX, piece.y + direction)
+			moves[#moves + 1] = move
+		end
+	end
+	
+	return moves
+end
+
+function board:getKingMoves(piece)
+	local moves = {}
+	
+	for dx = -1, 1 do
+		for dy = -1, 1 do
+			local x, y = piece.x + dx, piece.y + dy
+			if ((x ~= 0 or y ~= 0) and self:inBounds(x, y) and ((not self.grid[x][y]) or self.grid[x][y].player ~= piece.player)) then
+				moves[#moves + 1] = point(x, y)				
+			end
+		end
+	end
+	
+	local kingY = piece.player and BOARD_SIZE or 1	
+	
+	
+	
+	return moves
+end
+
+function board:getCastleMoves(piece, moves)
+	local function castle(direction)
+		if (not piece.fresh) then
+			return
+		end
+		
+		local otherPiece = self.grid[direction > 0 and BOARD_SIZE or 1][piece.y]
+		
+		if ((not otherPiece) or (not otherPiece.fresh)) then
+			return
+		end
+		
+		if (self.grid[piece.x + direction][piece.y] or self.grid[piece.x + direction + direction][piece.y]) then
+			return
+		end
+		
+		return true
+	end
+	
+	if (castle(1)) then
+		moves[#moves + 1] = point(piece.x + 2, piece.y)
+	end
+	
+	if (castle(-1)) then
+		moves[#moves + 1] = point(piece.x - 2, piece.y)
+	end
+end
+
+function board:getKnightMoves(piece)
+	local moves = {}
+	
+	for _, move in pairs(knightMoves) do
+		local x, y = move.x + piece.x, move.y + piece.y
+	
+		if (self:inBounds(x, y) and ((not self.grid[x][y]) or self.grid[x][y].player ~= piece.player)) then
+			moves[#moves + 1] = point(move.x + piece.x, move.y + piece.y)
+		end
+	end
+	
+	return moves
+end
+
+function board:getPieceMoves(piece, ignoreCheck)		--maybe something to do with color of moves here?
+	local moves
+	
+	if (piece.type == pieceType.pawn) then
+		moves = self:getPawnMoves(piece)
+	elseif (piece.type == pieceType.knight) then
+		moves = self:getKnightMoves(piece)
+	elseif (piece.type == pieceType.bishop) then
+		moves = self:getBishopMoves(piece)
+	elseif (piece.type == pieceType.rook) then
+		moves = self:getRookMoves(piece)
+	elseif (piece.type == pieceType.queen) then
+		moves = self:getQueenMoves(piece)
+	elseif (piece.type == pieceType.king) then
+		moves = self:getKingMoves(piece)
+		
+		--if ((not ignoreCheck) and (not self:isInCheck(piece.player))) then
+			self:getCastleMoves(piece, moves)
+			print("fetching castle moves")
+		--end
+	end
+	
+	if (not ignoreCheck) then
+		for index = #moves, 1, -1 do
+			if (self:surveyMove(piece, moves[index].x, moves[index].y)) then
+				table.remove(moves, index)
+			end
+		end
+	end
+	
+	return moves
+end
+
+function board:movePiece(piece, x, y, subsequent, promotion)
+	if (piece.player ~= self.currentTurn) then				--piece.player, and self refers to player,
+		return
+	end
+	
+	if (self:isLegal(piece, x, y, subsequent)) then		--investigate is legal, that will find the color editing of the script
+		local pastX, pastY = piece.x, piece.y
+		self.grid[pastX][pastY] = false
+		
+		piece.x = x
+		piece.y = y
+		
+		local capturedPiece
+		
+		local enpassant
+		
+		if (piece.type == pieceType.pawn and math.abs(x - pastX) == 1 and (not self.grid[x][y])) then -- en passant
+			capturedPiece = self.grid[x][pastY]
+			self.grid[x][pastY] = false
+			enpassant = true
+		else
+			capturedPiece = self.grid[x][y]
+		end
+		
+		
+		self.grid[x][y] = piece
+				
+		local move = {
+			player = piece.player; -- should be obvious
+			piece = util.cloneTable(piece);
+			capturedPiece = capturedPiece and util.cloneTable(capturedPiece);
+			newX = x;
+			newY = y;
+			pastX = pastX;
+			pastY = pastY;
+		} -- castling
+		
+		move.enpassant = enpassant
+		
+		if (piece.type == pieceType.king and math.abs(move.newX - move.pastX) > 1) then
+			move.castle = math.sign(move.newX - move.pastX)
+			
+			local rX, rNX = move.castle > 0 and BOARD_SIZE or 1, move.newX - move.castle
+			local rook = self.grid[rX][move.newY]
+			self.grid[rook.x][rook.y] = false
+			rook.x = rNX
+			self.grid[rook.x][rook.y] = rook
+			
+			print("castle test")
+		end		
+		
+		if (piece.fresh) then			--perhaps here, fresh has to do with color?
+			piece.fresh = false
+			move.fresh = true
+		end
+		
+		if (piece.type == pieceType.pawn and y == (piece.player and 1 or BOARD_SIZE)) then
+			promotion = (promotion == pieceType.bishop or promotion == pieceType.rook or promotion == pieceType.queen) and promotion or pieceType.queen
+			piece.type = promotion
+			move.promotion = promotion
+		end		
+		
+		self.log[#self.log + 1] = move		
+		
+		self.currentTurn = not piece.player
+		return move
+	end
+end
+
+function board:makeMove(player, x, y, newX, newY)
+	if (self.grid[x][y] and self.grid[x][y].player == player) then
+		return self:movePiece(self.grid[x][y], newX, newY)
+	end
+end
+
+function board:revertMove()
+	if (#self.log > 0) then
+		local move = table.remove(self.log, #self.log)
+		
+		local piece = self.grid[move.newX][move.newY]		
+		self.grid[move.newX][move.newY] = false
+		self.grid[move.pastX][move.pastY] = piece
+		
+		
+		piece.x = move.pastX
+		piece.y = move.pastY
+		
+		if (move.capturedPiece) then
+			if (move.enpassant) then
+				move.capturedPiece.x = move.newX
+				move.capturedPiece.y = move.pastY
+			else
+				move.capturedPiece.x = move.newX
+				move.capturedPiece.y = move.newY
+			end
+			
+			self.grid[move.capturedPiece.x][move.capturedPiece.y] = move.capturedPiece or false
+		end
+		
+		if (move.fresh) then
+			piece.fresh = true
+		end
+		
+		if (move.promotion) then
+			piece.type = pieceType.pawn
+		end
+		
+		if (move.castle) then
+			print("castle revert")
+			local rook = self.grid[move.newX - move.castle][move.newY]
+			self.grid[rook.x][rook.y] = false			
+			rook.x = move.castle > 0 and BOARD_SIZE or 1			
+			self.grid[rook.x][rook.y] = rook			
+		end
+		
+		self.currentTurn = move.player
+	end
+end
+
+function board:createPiece(x, y, type, player)
+	if (not self.grid[x][y]) then
+		local piece = {}
+		piece.type = type
+		piece.x = x
+		piece.y = y
+		piece.player = player
+		piece.fresh = true
+		self.grid[x][y] = piece
+		
+		if (piece.type == pieceType.king) then
+			self.kings[player] = piece
+		end
+		
+		return piece
+	else
+		error("occupied")
+	end
+end
+
+function board:isConcluded()
+	local player = self.currentTurn
+	
+	for x = 1, BOARD_SIZE do
+		for y = 1, BOARD_SIZE do
+			local piece = self.grid[x][y]
+			
+			if (piece and piece.player == player) then
+				if (#self:getPieceMoves(piece) > 0) then
+					return false
+				end
+			end
+		end
+	end
+	
+	if (self:isInCheck(player)) then
+		return true, not player
+	else
+		return true
+	end
+end
+
+function board:destroy()
+	self.kings = nil
+	self.log = nil
+	self.grid = nil
+end
+
+module.new = function(log)
+	local newBoard = {}
+	
+	newBoard.boardSize = BOARD_SIZE
+	newBoard.kings = {}
+	newBoard.log = {}
+	newBoard.currentTurn = true
+
+	setmetatable(newBoard, {__index = board})
+	
+	newBoard:set()
+	
+	if (log) then
+		for i, move in ipairs(log) do
+			newBoard:makeMove(move.player, move.pastX, move.pastY, move.newX, move.newY)
+		end
+	end
+	
+	return newBoard
+end
+
+return module
