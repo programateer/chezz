@@ -1,0 +1,92 @@
+local module = {}
+
+local TILT_SENSITIVITY = .01
+local ZOOM_SENSITIVITY = 3
+local MAX_ZOOM = 70
+local MIN_ZOOM = 40
+
+local MIN_TILT = math.pi/10
+local MAX_TILT = math.pi/2.2
+
+local camera = workspace.CurrentCamera
+
+local renderLoop
+
+local active = false
+
+local yaw = 0
+local pitch = MIN_TILT
+local zoom = MIN_ZOOM
+
+local tweenStartCFrame
+local tweenCurrentCFrame
+local tweenAlpha
+
+local position
+
+local inputLocked
+
+local function bindUserInput() -- name, function, priorityLevel, input
+	game:GetService("ContextActionService"):BindActionAtPriority("inputLock", function(_, inputState, input)
+		if (inputState == Enum.UserInputState.Begin) then
+			inputLocked = true
+			game:GetService("UserInputService").MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
+		elseif (inputState == Enum.UserInputState.End) then
+			inputLocked = false
+			game:GetService("UserInputService").MouseBehavior = Enum.MouseBehavior.Default
+		end
+	end, false, 9, Enum.UserInputType.MouseButton2)
+	game:GetService("ContextActionService"):BindActionAtPriority("cameraTilt", function(_, inputState, input)
+		if (inputLocked) then
+			yaw = (yaw + input.Delta.X * -TILT_SENSITIVITY) % (2 * math.pi)
+			pitch = math.clamp(pitch + input.Delta.Y * TILT_SENSITIVITY, MIN_TILT, MAX_TILT)
+		end
+	end, false, 9, Enum.UserInputType.MouseMovement)
+	game:GetService("ContextActionService"):BindActionAtPriority("zoom", function(_, inputState, input)
+		zoom = math.clamp(zoom + input.Position.Z * -ZOOM_SENSITIVITY, MIN_ZOOM, MAX_ZOOM)
+	end, false, 9, Enum.UserInputType.MouseWheel)
+end
+
+local function unbindUserInput()
+	game:GetService("ContextActionService"):UnbindAction("inputLock")
+	game:GetService("ContextActionService"):UnbindAction("cameraTilt")
+	game:GetService("ContextActionService"):UnbindAction("zoom")
+end
+
+function module.view(focus)	
+	if (active) then
+		module.deview()
+	end
+	
+	bindUserInput()
+	
+	position = focus
+	active = true
+	
+	camera.CameraType = Enum.CameraType.Scriptable
+	
+	renderLoop = game:GetService("RunService").RenderStepped:connect(function(delta)
+		camera.CFrame = CFrame.new((CFrame.Angles(0, yaw, 0) * CFrame.Angles(pitch, 0, 0)) * Vector3.new(0, 0, -zoom) + position, position)
+	end)
+end
+
+function module.deview()
+	if (not active) then
+		return
+	end
+	
+	active = false	
+	
+	camera.CameraType = Enum.CameraType.Custom
+	
+	unbindUserInput()
+	
+	if (renderLoop) then
+		renderLoop:disconnect()
+		renderLoop = nil
+	end
+end
+	
+
+
+return module
