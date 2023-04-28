@@ -1,0 +1,39 @@
+local module = {}
+
+local event = {}
+
+function event:fire(...)
+	if (self.event) then
+		self.event:Fire(...)
+	end
+end
+
+function event:connect(func)
+	if (self.event) then
+		self.event.Event:connect(func)
+	end
+end
+
+function event:wait()
+	if (self.event) then
+		return self.event.Event:wait()
+	end
+end
+
+function event:destroy()
+	if (self.event) then
+		self.event:Destroy()
+	end
+end
+
+module.new = function()
+	local newEvent = {}
+	newEvent.event = Instance.new("BindableEvent")
+	
+	setmetatable(newEvent, {__index = event})	
+	
+	return newEvent
+end
+
+
+return module
