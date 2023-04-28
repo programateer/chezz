@@ -1,0 +1,138 @@
+local replicatedStorage = game:GetService("ReplicatedStorage")
+local chess = require(replicatedStorage.chess)
+local util = require(replicatedStorage.utilities)
+
+local matches = {}
+local matchCount = 0
+local matchSpacing = 200			--likely has to do with how far matches are spaced apart if multiple matches
+
+local function getMatchFromPlayer(player)
+	for _, match in pairs(matches) do
+		if (match.players[player] ~= nil) then
+			return match
+		end
+	end
+end
+
+local function destroyMatch(match)
+	matches[match.id] = nil
+	match.players = nil
+	match.board:destroy()
+	match.board = nil
+	match.spawn:Destroy()
+	match.spawn = nil
+	
+	if (match.active) then
+		replicatedStorage.remotes.endMatch:FireAllClients(match.id, nil)
+		match.active = false
+	end
+	
+	match.spawn = nil
+end
+
+local function createMatch(...)
+	local players = {...}
+	
+	local users = {}
+	
+	local match = {}
+	match.id = tostring(tick())
+	match.players = users
+	match.board = chess.new()		---renamed chess1? must fix? ill test -- HAD TO FIX TO WORK
+	match.destroy = destroyMatch
+	
+	match.spawn = Instance.new("SpawnLocation", workspace.spawns)
+	match.spawn.Anchored = true
+	match.spawn.Neutral = true
+	match.spawn.CanCollide = false
+	match.spawn.Transparency = 1 			--first edit, WASNT VISIBLE, 
+	match.spawn.CFrame = CFrame.new(matchCount * matchSpacing, 0, 0)
+	match.spawn.Duration = 0			---perhaps test this turn to 5 to see if spawns last  seconds, no spawn is deleted likely due to line 66
+	
+	match.active = true
+	
+	matchCount = matchCount + 1
+	
+	local playerList = {}
+		
+	for i, player in pairs(players) do
+		users[player] = (i % 2 == 1)
+		playerList[#playerList + 1] = player.userId
+	end
+	
+	match.playerList = playerList
+		
+	for i, player in pairs(game.Players:GetPlayers()) do
+		replicatedStorage.remotes.createMatch:FireClient(player, match.id, match.players[player], match.spawn.CFrame, nil, playerList)
+	end
+	
+	matches[match.id] = match
+end
+
+local function replicateMatches(player)
+	for id, match in pairs(matches) do
+		replicatedStorage.remotes.replicateMatch:FireClient(player, match.id, match.spawn.CFrame, match.board.log, match.playerList)
+	end
+end
+
+local function isMatchConcluded(match)
+	local over, winner = match.board:isConcluded()
+	
+	if (over) then
+		replicatedStorage.remotes.endMatch:FireAllClients(match.id, winner)
+		match.active = false		
+		match:destroy()
+	end
+end
+
+local function makeMove(player, x, y, newX, newY)
+	local match = getMatchFromPlayer(player)
+	
+	if (match) then
+		local playerField = match.players[player]
+	
+		if (match.board:makeMove(playerField, x, y, newX, newY)) then
+			for _, player in pairs(game.Players:GetPlayers()) do -- or all players, whatever
+				replicatedStorage.remotes.makeMove:FireClient(player, match.id, playerField, x, y, newX, newY)
+			end
+			
+			isMatchConcluded(match)
+		end
+	end
+end
+
+replicatedStorage.remotes.makeMove.OnServerEvent:connect(makeMove)
+
+replicatedStorage.remotes.requestInvite.OnServerInvoke = function(player, invitePlayer)
+	if (player and invitePlayer and player.Parent and invitePlayer.Parent and (not getMatchFromPlayer(player)) and (not getMatchFromPlayer(invitePlayer))) then
+		
+		replicatedStorage.remotes.inviteMatch:FireClient(invitePlayer, player)
+		
+		return true
+	end
+	
+	return
+end
+
+replicatedStorage.remotes.inviteMatch.OnServerEvent:connect(function(playerA, playerB) -- a bit exploitable but meh
+	if (playerA and playerB and playerA.Parent and playerB.Parent and (not getMatchFromPlayer(playerA)) and (not getMatchFromPlayer(playerB))) then
+		createMatch(playerA, playerB)
+	end
+end)
+
+replicatedStorage.remotes.spectateMatch.OnServerEvent:connect(function(player, id) -- for moving the character
+	if (player and player.Character and matches[id]) then
+		player.RespawnLocation = matches[id].spawn
+		player:LoadCharacter()
+	end
+end)
+
+game.Players.PlayerAdded:connect(replicateMatches)
+
+game.Players.PlayerRemoving:connect(function(player)
+	local match = getMatchFromPlayer(player)
+	
+	if (match) then
+		match:destroy()
+	end
+end)
