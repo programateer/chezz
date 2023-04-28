@@ -1,0 +1,306 @@
+repeat
+	wait(.2)
+until (game.Players.LocalPlayer)
+
+game.Players.LocalPlayer:WaitForChild("PlayerGui"):SetTopbarTransparency(0)
+game:GetService("StarterGui"):SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
+game:GetService("StarterGui"):SetCoreGuiEnabled(Enum.CoreGuiType.Health, false)
+
+local storage = game:GetService("ReplicatedStorage")
+local draw = require(script:WaitForChild("draw"))
+local util = require(storage.utilities)
+local chess = require(storage.chess)
+local camera = require(script:WaitForChild("camera"))
+local gui = require(script:WaitForChild("gui"))
+
+local userMatch
+local spectateMatch
+local matches = {}
+
+local function deviewMatch()
+	if (spectateMatch) then
+		gui.screen.back.Visible = false
+		spectateMatch = nil
+		camera.deview()
+		gui.transitionScreen(true)
+		gui.setPlayerDisplay(nil)
+	end
+end
+
+local function addAvailablePlayer(player)
+	if (player and player.Parent and player ~= game.Players.LocalPlayer) then
+		gui.lists.available:add(player, player.Name)
+	end
+end
+
+local function removeAvailablePlayer(player)
+	if (player) then
+		gui.lists.available:remove(player)
+		gui.lists.invite:remove(player)
+	end
+end
+
+local function getPlayerFromId(id)
+	for i,v in pairs(game.Players:GetPlayers()) do
+		if (v.userId == id) then
+			return v
+		end
+	end
+end
+
+local function destroyMatch(match)
+	matches[match.id] = nil
+	
+	local player1, player2 = getPlayerFromId(match.playerList[1]), getPlayerFromId(match.playerList[2])
+	
+	addAvailablePlayer(player1)
+	addAvailablePlayer(player2)
+		
+	if (userMatch == match) then
+		userMatch = nil
+	end
+	
+	if (match == spectateMatch) then
+		deviewMatch()
+	end
+	
+	gui.lists.spectate:remove(match.id)
+	
+	match.chess:destroy()
+	match.chess = nil
+	match.board:destroy()
+	match.board = nil
+end
+
+local function setTurnStatus()
+	local status
+	
+	if (spectateMatch == userMatch) then
+		status = (userMatch.chess.currentTurn == userMatch.playerField and "Your" or "Opponent's") .. " turn"
+	else
+		status = (spectateMatch.chess.currentTurn and "White" or "Black") .. "'s turn"
+	end
+	
+	if (spectateMatch.chess:isInCheck(spectateMatch.chess.currentTurn)) then
+		gui.setStatus(status .. " - Check")
+	else
+		gui.setStatus(status)
+	end
+end
+
+local function viewMatch(match)
+	if (match and match ~= spectateMatch) then
+		gui.transitionScreen(false)
+		gui.setPlayerDisplay(getPlayerFromId(match.playerList[1]), getPlayerFromId(match.playerList[2]))
+		camera.view(match.board.board:GetPrimaryPartCFrame().p)
+		spectateMatch = match
+		setTurnStatus()
+		storage.remotes.spectateMatch:FireServer(spectateMatch.id)
+		
+		if (match ~= userMatch) then
+			gui.screen.back.Visible = true
+		end
+	end
+end
+
+local function createMatch(id, user, cf, log, playerList)
+	local player1, player2 = getPlayerFromId(playerList[1]), getPlayerFromId(playerList[2])
+	
+	removeAvailablePlayer(player1)
+	removeAvailablePlayer(player2)	
+	
+	if (not (player1 and player2)) then
+		error("players not here")
+	end
+	
+	local match = {}
+	match.id = id
+	match.chess = chess.new(log)
+	match.board = draw.new(cf)
+	match.active = true
+	match.board:set(match.chess)
+	match.destroy = destroyMatch -- too lazy to metatable
+	match.playerList = playerList
+	
+	gui.lists.spectate:add(match.id, player1.Name .. " vs " .. player2.Name)
+	
+	if (user ~= nil) then
+		userMatch = match
+		userMatch.playerField = user
+		
+		for index, member in pairs(gui.lists.available.members) do
+			gui.lists.available:setCheck(member.ref, false)
+		end		
+		
+		viewMatch(userMatch)
+	end
+	
+	matches[id] = match
+end
+
+for i, player in pairs(game.Players:GetPlayers()) do
+	addAvailablePlayer(player)
+end
+
+storage.remotes.createMatch.OnClientEvent:connect(createMatch)
+storage.remotes.replicateMatch.OnClientEvent:connect(function(id, cf, log, playerList)
+	createMatch(id, nil, cf, log, playerList)	
+end)
+
+local function partToGrid(part)				---lol the board and walls always existed within assets and are hard color coded no scripting damn
+	local x = part.Name:match("%d+")
+	if (x) then
+		local y = part.Name:sub(#x + 1)
+		return tonumber(x), tonumber(y)
+	end
+end
+
+local function getGridTarget(x, y)
+	local clippingRay = workspace.CurrentCamera:ScreenPointToRay(x, y, 0)
+	
+	local ray = Ray.new(clippingRay.Origin, clippingRay.Direction * 999)
+	local hit, position = workspace:FindPartOnRayWithWhitelist(ray, {userMatch.board.board})
+	
+	if (hit and hit ~= userMatch.board.board.PrimaryPart) then
+		return hit, partToGrid(hit)
+	end
+end
+
+local currentGridPart
+local currentGridX
+local currentGridY
+
+local function deselect()
+	userMatch.board:unhighlight("select")
+	currentGridPart = nil
+	currentGridX = nil
+	currentGridY = nil
+end
+
+storage.remotes.makeMove.OnClientEvent:connect(function(id, playerField, x, y, newX, newY)
+	local match = matches[id]
+	
+	if (match) then
+		match.board:unhighlight()
+		local move = match.chess:makeMove(playerField, x, y, newX, newY)
+		
+		if (move.promotion) then
+			match.board:capturePiece(move.pastX, move.pastY)
+			match.board:capturePiece(move.newX, move.newY)
+			match.board:createPiece(move.promotion, move.newX, move.newY, move.player)
+		else
+			match.board:movePiece(move.pastX, move.pastY, move.newX, move.newY)
+		end
+		
+		if (move.enpassant) then
+			match.board:capturePiece(move.newX, move.pastY)
+		end
+		
+		if (move.castle) then
+			match.board:movePiece(move.castle > 0 and match.chess.boardSize or 1, move.newY, move.newX - move.castle, move.newY)
+		end
+		
+		if (match ~= userMatch or playerField ~= userMatch.playerField) then
+			match.board:highlight("movement", {{x = newX, y = newY}, {x = x, y = y}})
+		end
+			
+		if (match == spectateMatch) then
+			setTurnStatus()
+		end
+	end
+end)
+
+storage.remotes.endMatch.OnClientEvent:connect(function(id, winner)
+	local match = matches[id]
+	
+	if (match == spectateMatch) then
+		spectateMatch.active = false
+		
+		if (spectateMatch == userMatch) then
+			gui.setStatus(winner == nil and "Stalemate" or ("Checkmate - " .. (winner == userMatch.playerField and "You win" or "You lose")))
+		else
+			gui.setStatus(winner == nil and "Stalemate" or ("Checkmate - " .. (winner and "White wins" or "Black wins")))
+		end
+		
+		gui.screen.back.Visible = true
+	else
+		match:destroy()
+	end
+end)
+
+storage.remotes.inviteMatch.OnClientEvent:connect(function(player)
+	if (player and player.Parent) then
+		removeAvailablePlayer(player) -- may aswell
+		gui.lists.invite:add(player, player.Name)
+	end
+end)
+
+gui.lists.spectate.interacted:connect(function(matchId)
+	if (matches[matchId]) then
+		viewMatch(matches[matchId])
+	end
+end)
+
+gui.lists.available.interacted:connect(function(player)
+	if (player and player.Parent and (not userMatch)) then
+		local result
+		
+		local success = pcall(function()
+			result = storage.remotes.requestInvite:InvokeServer(player)
+		end)
+		
+		if (result and success) then
+			gui.lists.available:setCheck(player, true)
+		end
+	end
+end)
+
+gui.lists.invite.interacted:connect(function(player)
+	if (player and player.Parent and (not userMatch)) then
+		storage.remotes.inviteMatch:FireServer(player)
+	end
+end)
+
+gui.screen.back.button.MouseButton1Click:connect(function()
+	if (spectateMatch) then
+		if (spectateMatch.active) then
+			deviewMatch()
+		else
+			spectateMatch:destroy()
+		end
+	end
+end)
+
+game.Players.PlayerAdded:connect(addAvailablePlayer)
+game.Players.PlayerRemoving:connect(removeAvailablePlayer)
+
+game:GetService("ContextActionService"):BindActionAtPriority("select", function(_, inputState, input)
+	if (inputState ~= Enum.UserInputState.End) then
+		return
+	end
+	
+	
+	if (userMatch and userMatch.active) then
+		local gridPart, x, y = getGridTarget(input.Position.X, input.Position.Y)
+		
+		if (gridPart) then
+			if (gridPart ~= currentGridPart and userMatch.chess.currentTurn == userMatch.playerField) then
+				if (userMatch.chess.grid[x][y] and userMatch.chess.grid[x][y].player == userMatch.playerField) then
+					currentGridPart = gridPart
+					currentGridX, currentGridY = x, y
+					local highlightPoints = userMatch.chess:getPieceMoves(userMatch.chess.grid[x][y])
+					table.insert(highlightPoints, 1, {x = x, y = y})
+					userMatch.board:highlight("select", highlightPoints)
+				elseif (currentGridPart) then
+					if (userMatch.chess.grid[currentGridX][currentGridY] and userMatch.chess:isLegal(userMatch.chess.grid[currentGridX][currentGridY], x, y)) then
+						storage.remotes.makeMove:FireServer(currentGridX, currentGridY, x, y)
+					end
+				end
+			elseif (gridPart == currentGridPart and userMatch.chess.currentTurn == userMatch.playerField) then
+				deselect()
+			end
+		else
+			deselect()
+		end
+	end
+end, false, 1, Enum.UserInputType.MouseButton1)
