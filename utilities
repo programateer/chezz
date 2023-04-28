@@ -1,0 +1,106 @@
+local module = {}
+
+module.listLength = function(dictionary)
+	local count = 0
+	
+	for _, v in pairs(dictionary) do
+		count = count + 1
+	end
+	
+	return count
+end
+
+module.constrainNumber = function(number, min, max)
+	return number < min and min or number > max and max or number
+end
+
+module.listEmpty = function(dictionary)
+	for _, v in next, dictionary do
+		return false
+	end
+	
+	return true
+end
+
+module.toBool = function(str)
+	if (str and str ~= "false" and str ~= "nil") then
+		return true
+	else
+		return false
+	end
+end
+
+local function recurse(obj, func)
+	for i, v in pairs(obj:GetChildren()) do
+		func(v)
+		recurse(v, func)
+	end
+end
+
+module.recurse = recurse
+
+module.allocateArray = function(size, value)
+	local array = {}
+	for i = 1, size do
+		table.insert(array, value)
+	end
+	
+	return array
+end
+
+module.combineArrays = function(a, b)
+	for _,v in pairs(b) do
+		table.insert(a, v)
+	end
+end
+
+module.removeElementFromArray = function(array, element)
+	for i, e in pairs(array) do
+		if (e == element) then
+			table.remove(array, i)
+			break;
+		end
+	end
+end
+
+module.randomElement = function(array)
+	if (#array > 0) then
+		return array[math.random(1, #array)]
+	end
+end
+
+module.isInArray = function(array, element)
+	for i = 1, #array do
+		if (element == array[i]) then
+			return i
+		end
+	end
+	
+	return false
+end
+
+module.round = function(number, precision)
+	return number - (number % precision) + (((number % precision) > (precision / 2)) and precision or 0)
+end
+
+local char = {"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0"}
+
+module.generateKey = function(length)
+	local key = ""
+	for i = 1, length do
+		key = key .. char[math.random(1, #char)]
+	end
+	return key
+end
+
+module.cloneTable = function(t)
+	local new = {}
+	
+	for i,v in pairs(t) do
+		new[i] = v
+	end
+	
+	return new
+end
+
+return module
