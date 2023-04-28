@@ -1,0 +1,252 @@
+local module = {}
+
+local storage = game:GetService("ReplicatedStorage")
+local assets = storage.assets
+local games = workspace.games
+local util = require(storage.utilities)
+
+local tweenService = game:GetService("TweenService")
+
+local BOARD_SIZE = 8
+
+local pieceType = {
+	pawn = 1;
+	knight = 2;
+	bishop = 3;
+	rook = 4;
+	queen = 5;
+	king = 6;
+}
+
+local pieceName = util.allocateArray(util.listLength(pieceType), false)
+
+for i,v in pairs(pieceType) do
+	pieceName[v] = i
+end
+
+local SELECTION_COLOR = Color3.fromRGB(48, 168, 84)		--medium green
+local LINE_THICKNESS = .05
+local SURFACE_COLOR = Color3.fromRGB(74, 255, 131)		--lime green
+
+local PIECE_COLORS = {}
+PIECE_COLORS[true] = Color3.fromRGB(184, 184, 184)		--light grey, so how to rather than make highlighted, raise and lower the squares, and pieces
+PIECE_COLORS[false] = Color3.fromRGB(106, 106, 106)		--dark grey, changing these colors changes color of pieces
+
+local COLORS =  {
+	["select"] = Color3.fromRGB(74, 255, 131);		--lime green again
+	["movement"] = Color3.fromRGB(255, 245, 105);		--yellow after moved
+}
+																--OKAY, so ive learned that the squares get their colors from the piece colors
+local TWEEN_STYLE = Enum.EasingStyle.Quad
+local TWEEN_SPEED = .2
+
+local selectionTemplate = Instance.new("SelectionBox")
+selectionTemplate.Color3 = SELECTION_COLOR
+selectionTemplate.LineThickness = 0
+selectionTemplate.SurfaceColor3 = SURFACE_COLOR
+selectionTemplate.SurfaceTransparency = .1
+selectionTemplate.Transparency = 1
+
+local spacing = assets.board["1 1"].Size.X			--1 1 mimics the name of the squares in game, so does this define the 6x6 spacing of squares?
+
+local board = {}
+
+local function tween(obj, property, value, callback)
+	local t = {}
+	t[property] = value
+	
+	local tween = tweenService:Create(obj, TweenInfo.new(TWEEN_SPEED, TWEEN_STYLE), t)
+	tween:Play()
+	
+	if (callback) then
+		tween.Completed:connect(function(playbackState)
+			if (playbackState == Enum.PlaybackState.Completed) then
+				callback(obj)
+			end
+		end)
+	end
+end
+
+local function tweenModelCFrame(model, info, CF)
+	local CFrameValue = Instance.new("CFrameValue")
+	CFrameValue.Value = model:GetPrimaryPartCFrame()
+
+	CFrameValue:GetPropertyChangedSignal("Value"):connect(function()
+		model:SetPrimaryPartCFrame(CFrameValue.Value)
+	end)
+	
+	local tween = tweenService:Create(CFrameValue, info, {Value = CF})
+	tween:Play()
+	
+	tween.Completed:connect(function()
+		CFrameValue:Destroy()
+	end)
+end
+
+function board:createPiece(pieceType, x, y, player)
+	local piece = {}
+	local model = assets[pieceName[pieceType]]:clone()
+	
+	local gridPart = self.board[tostring(x) .. " " .. tostring(y)]				
+	model:SetPrimaryPartCFrame(gridPart.CFrame * CFrame.new(0, gridPart.Size.Y/2 + model.PrimaryPart.Size.Y/2, 0))	--quaternion
+	model.Parent = self.pieces
+	
+	for i, object in pairs(model:GetDescendants()) do
+		if (object:IsA("BasePart") or object:IsA("MeshPart") or object:IsA("UnionOperation")) then
+			object.Color = PIECE_COLORS[player]				--object.color = piece_colors 
+		end														--
+	end																--
+															
+	piece.model = model
+	piece.player = player
+	self.grid[x][y] = piece
+end
+
+function board:movePiece(x, y, newX, newY)		--piece actually moving across squares
+	local piece = self.grid[x][y]
+	
+	if (piece) then
+		local gridPart = self.board[tostring(newX) .. " " .. tostring(newY)]
+		tweenModelCFrame(piece.model, TweenInfo.new(TWEEN_SPEED * 2.5, TWEEN_STYLE), gridPart.CFrame * CFrame.new(0, gridPart.Size.Y/2 + piece.model.PrimaryPart.Size.Y/2, 0))
+		
+		if (self.grid[newX][newY]) then
+			self:capturePiece(newX, newY)
+		end
+		
+		self.grid[x][y] = nil
+		self.grid[newX][newY] = piece
+	end
+end
+
+function board:capturePiece(x, y)
+	local piece = self.grid[x][y]
+	
+	if (not piece) then
+		return
+	end
+	
+	self.grid[x][y] = nil
+	self.pieceLine[piece.player][#self.pieceLine[piece.player] + 1] = piece			
+	
+	local row = math.floor((#self.pieceLine[piece.player] - 1)/BOARD_SIZE)
+	local column = ((#self.pieceLine[piece.player] - 1) % 8) + 1
+	
+	local origin = self.board:GetPrimaryPartCFrame() * CFrame.new(-spacing * (BOARD_SIZE/2 + .5), self.board.PrimaryPart.Size.Y/2 + piece.model.PrimaryPart.Size.Y/2, (piece.player and -1 or 1) * -spacing * (BOARD_SIZE/2 + 1 + row))		
+	
+	piece.model:SetPrimaryPartCFrame(origin)
+	tweenModelCFrame(piece.model, TweenInfo.new(TWEEN_SPEED * 1.25, TWEEN_STYLE), origin * CFrame.new(spacing * (BOARD_SIZE + 1 - column), 0, 0))
+end
+
+function board:set(chess)			--perhaps this where bricks are created?
+	for x = 1, BOARD_SIZE do			--board_size = 8
+		for y = 1, BOARD_SIZE do
+			if (self.grid[x][y]) then
+				self.grid[x][y].model:Destroy()
+				self.grid[x][y] = nil
+			end
+			
+			if (chess.grid[x][y]) then
+				self:createPiece(chess.grid[x][y].type, x, y, chess.grid[x][y].player)
+			end
+		end
+	end
+end
+
+function board:unhighlight(tag)
+	for selectionBox, selectionTag in pairs(self.highlights) do
+		if ((not tag) or selectionTag == tag) then
+			tween(selectionBox, "SurfaceTransparency", 1, function() -- optimize
+				selectionBox.Visible = false						-- they said optimize, does this mean, at every moment the engine is checking
+			end)															--to see if a square is unhighlighted?
+			self.highlights[selectionBox] = nil
+		end
+	end
+end
+
+function board:highlight(tag, points)
+	self:unhighlight(tag)
+	
+	for i = 1, #points do
+		local point = points[i]
+		local selectionBox = self.selections[tostring(point.x) .. " " .. tostring(point.y)]			
+		
+		if (not selectionBox.Visible) then
+			selectionBox.SurfaceTransparency = 1
+			selectionBox.Visible = true
+		end
+		
+		
+		selectionBox.SurfaceColor3 = COLORS[tag]
+		selectionBox.Color3 = COLORS[tag]
+		
+		if (i ~= 1) then
+			selectionBox.LineThickness = 0
+		else
+			selectionBox.LineThickness = selectionTemplate.LineThickness
+		end
+		
+		self.highlights[selectionBox] = tag
+		
+		tween(selectionBox, "SurfaceTransparency", selectionTemplate.SurfaceTransparency)
+	end	
+end
+
+function board:destroy()
+	self.board:Destroy()
+	self.board = nil
+	self.pieces:Destroy()
+	self.pieces = nil
+	self.selections:Destroy()
+	self.selections = nil
+	self.grid = nil
+	self.pieceLine = nil
+	self.highlights = nil
+	self.block:Destroy()
+end
+
+board.new = function(coordinates)
+	local newBoard = {}
+	
+	newBoard.board = assets.board:clone()
+	newBoard.board.Parent = games
+	newBoard.board:SetPrimaryPartCFrame(coordinates)
+	newBoard.pieceLine = {}
+	newBoard.grid = {}
+	newBoard.highlights = {}
+	newBoard.selections = Instance.new("Folder") -- easier to clear
+	newBoard.selections.Name = "selections"
+	newBoard.selections.Parent = newBoard.board
+	newBoard.pieces = Instance.new("Folder")
+	newBoard.pieces.Name = "pieces"
+	newBoard.pieces.Parent = workspace
+	newBoard.block = assets.block:clone()
+	newBoard.block:SetPrimaryPartCFrame(newBoard.board:GetPrimaryPartCFrame() * CFrame.new(0, -newBoard.board.PrimaryPart.Size.Y/2 - newBoard.block.PrimaryPart.Size.Y/2, 0))
+	newBoard.block.Parent = workspace
+	
+	newBoard.pieceLine[true] = {}					--editing this to false did not change anything
+	newBoard.pieceLine[false] = {}				--is this the black and white pieces? I dont think so,
+												-- I think pieceLines have to do with the possible selection squares based on move possibilities
+	for x = 1, BOARD_SIZE do
+		local column = {}
+	
+		for y = 1, BOARD_SIZE do
+			column[y] = false					--editing this broke everything lol
+			
+			local selectionBox = selectionTemplate:clone()
+			selectionBox.Adornee = newBoard.board[tostring(x) .. " " .. tostring(y)]
+			selectionBox.Name = tostring(x) .. " " .. tostring(y)
+			selectionBox.SurfaceTransparency = 1
+			selectionBox.LineThickness = 0
+			selectionBox.Visible = false
+			selectionBox.Parent = newBoard.selections
+		end
+		
+		newBoard.grid[x] = column
+	end
+	
+	setmetatable(newBoard, {__index = board})
+	
+	return newBoard
+end
+
+return board
